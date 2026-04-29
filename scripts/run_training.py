@@ -15,7 +15,7 @@ _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _project_root)
 os.chdir(_project_root)
 
-LOG_FILE = "logs/training.log"
+LOG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "training.log")
 
 
 def log(msg: str):
