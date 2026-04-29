@@ -1,0 +1,13 @@
+torch==2.2.0
+numpy==1.26.0
+pandas==2.2.0
+pyarrow
+tqdm
+matplotlib
+seaborn
+pytest
+open_spiel
+treys
+phevaluator
+phh
+wandb

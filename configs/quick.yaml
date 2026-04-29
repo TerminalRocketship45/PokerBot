@@ -1,0 +1,14 @@
+use_hunl: true
+n_iterations: 100
+n_traversals_per_iter: 500
+buffer_capacity: 500000
+n_batches: 200
+batch_size: 256
+hidden_dim: 256
+lr: 0.0001
+eval_freq: 25
+checkpoint_freq: 10
+checkpoint_dir: checkpoints
+use_wandb: false
+wandb_project: hunl-deep-cfr
+starting_stack: 200.0
