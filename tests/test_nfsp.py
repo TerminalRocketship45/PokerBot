@@ -43,6 +43,13 @@ def test_replay_buffer_overwrites_when_full():
     for i in range(20):
         buf.add(np.zeros(60, dtype=np.float32), action=0, G=float(i))
     assert len(buf) == 10  # capped at capacity
+    # After 20 adds to capacity-10 buffer, all stored G values must be >= 10.0.
+    # (items 0–9 must have been overwritten by items 10–19)
+    batch = buf.sample(10)
+    g_values = [g for _, _, g in batch]
+    assert all(g >= 10.0 for g in g_values), (
+        f"Buffer should contain only items 10-19 (G >= 10.0), got: {sorted(g_values)}"
+    )
 
 def test_replay_buffer_sample_raises_when_empty():
     buf = ReplayBuffer(capacity=100)
