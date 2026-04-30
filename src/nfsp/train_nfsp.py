@@ -130,6 +130,7 @@ def _update_pi_net(pi_net: PolicyNet, reservoir_buf: ReservoirBuffer,
 
     pi_net.train()
     optimizer.zero_grad()
+    # pi_net returns softmax probs; log+NLLLoss == cross-entropy over actions
     log_probs = torch.log(pi_net(states) + 1e-8)
     loss = nn.NLLLoss()(log_probs, actions)
     loss.backward()
