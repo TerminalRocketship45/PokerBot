@@ -439,12 +439,8 @@ def main():
 
     print(f"\nTotal (state, action) pairs: {n_pairs:,}")
 
-    # Build dataframe
-    states_arr = np.stack(all_states)
-    df = pd.DataFrame({
-        'state':  list(states_arr),
-        'action': all_actions,
-    })
+    states_arr  = np.stack(all_states).astype(np.float32)   # (N, 60)
+    actions_arr = np.array(all_actions, dtype=np.int64)      # (N,)
 
     # Show action distribution
     from collections import Counter
@@ -455,8 +451,11 @@ def main():
         cnt = dist.get(i, 0)
         print(f"  {name:15s}: {cnt:8,}  ({100*cnt/n_pairs:.1f}%)")
 
-    df.to_parquet(OUT_PATH, index=False)
-    print(f"\nSaved to {OUT_PATH}  ({len(df):,} rows)")
+    # Save as numpy arrays — no Python object overhead vs parquet rows
+    npz_path = OUT_PATH.replace('.parquet', '.npz')
+    np.savez_compressed(npz_path, states=states_arr, actions=actions_arr)
+    print(f"\nSaved to {npz_path}  ({n_pairs:,} pairs, "
+          f"{states_arr.nbytes / 1e6:.0f} MB states)")
 
 
 if __name__ == "__main__":
