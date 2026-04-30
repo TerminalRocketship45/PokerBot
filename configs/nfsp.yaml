@@ -1,0 +1,16 @@
+n_episodes: 200000
+eta: 0.1
+epsilon_start: 0.30
+epsilon_end: 0.01
+epsilon_decay_episodes: 100000
+replay_buffer_size: 100000
+reservoir_buffer_size: 200000
+update_every: 128
+batch_size: 512
+lr_q: 0.0001
+lr_pi: 0.0001
+hidden_dim: 256
+checkpoint_freq: 10000
+checkpoint_dir: checkpoints
+fold_bonus: 0.05
+fold_equity_threshold: 0.30
