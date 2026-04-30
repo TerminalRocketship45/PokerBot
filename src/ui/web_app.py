@@ -23,6 +23,7 @@ app = Flask(__name__)
 # ── Globals ────────────────────────────────────────────────────────────────────
 _env: PokerEnv = None
 _net: AdvantageNet = None
+_policy_net = None   # PolicyNet loaded from NFSP checkpoint; None for legacy CFR
 _state = None
 _ai_player = 0
 _human_player = 1
@@ -70,7 +71,7 @@ def _action_label(action_id: int, state, player: int) -> str:
 
 
 def _ai_act():
-    """AI takes its turn."""
+    """AI takes its turn — supports both legacy CFR (AdvantageNet) and NFSP (PolicyNet) checkpoints."""
     global _state, _last_ai_action, _last_ai_action_detail, _last_ai_probs
     if _state.is_terminal() or _state.is_chance_node():
         return
@@ -80,22 +81,39 @@ def _ai_act():
     valid = [a for a in legal if a < N_ABSTRACT_ACTIONS]
     info = encode_state(_state, _ai_player, use_hunl=True)
     t = torch.FloatTensor(info).unsqueeze(0)
-    _net.eval()
-    with torch.no_grad():
-        adv = _net(t).squeeze(0)
-    mask = torch.zeros(N_ABSTRACT_ACTIONS, dtype=torch.bool)
-    for a in valid:
-        mask[a] = True
-    probs = regret_matching_plus(adv, mask)
+
+    if _policy_net is not None:
+        _policy_net.eval()
+        with torch.no_grad():
+            probs_full = _policy_net(t).squeeze(0)
+        legal_p = {a: probs_full[a].item() for a in valid}
+        total = sum(legal_p.values())
+        if total < 1e-9:
+            action = random.choice(valid)
+            probs = torch.zeros(N_ABSTRACT_ACTIONS)
+            probs[action] = 1.0
+        else:
+            norm = {a: p / total for a, p in legal_p.items()}
+            actions_list = list(norm.keys())
+            w = [norm[a] for a in actions_list]
+            action = int(np.random.choice(actions_list, p=w))
+            probs = probs_full
+    else:
+        _net.eval()
+        with torch.no_grad():
+            adv = _net(t).squeeze(0)
+        mask = torch.zeros(N_ABSTRACT_ACTIONS, dtype=torch.bool)
+        for a in valid:
+            mask[a] = True
+        probs = regret_matching_plus(adv, mask)
+        action = torch.multinomial(probs, 1).item()
+        if action not in legal:
+            action = random.choice(valid)
 
     _last_ai_probs = [
         {'name': ABSTRACT_ACTIONS[a], 'pct': round(float(probs[a]) * 100)}
         for a in range(N_ABSTRACT_ACTIONS) if probs[a] > 0.005
     ]
-
-    action = torch.multinomial(probs, 1).item()
-    if action not in legal:
-        action = random.choice(valid)
     _last_ai_action = ABSTRACT_ACTIONS[action] if action < N_ABSTRACT_ACTIONS else str(action)
     _last_ai_action_detail = _action_label(action, _state, _ai_player)
     _state.apply_action(action)
@@ -647,22 +665,32 @@ window.onload = () => newHand();
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def main():
-    global _env, _net
+    global _env, _net, _policy_net
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--checkpoint', default='checkpoints/hunl_final.pt')
     parser.add_argument('--port', type=int, default=5000)
     args = parser.parse_args()
 
+    from src.models.policy_net import PolicyNet
+
     _env = PokerEnv(use_hunl=True)
-    _net = AdvantageNet(input_dim=STATE_DIM, n_actions=_env.num_actions(), hidden_dim=256)
-    ckpt = os.path.join(
+    ckpt_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
         args.checkpoint,
     )
-    _net.load_state_dict(torch.load(ckpt, map_location='cpu'))
-    _net.eval()
-    print(f"Loaded: {ckpt}")
+    ckpt = torch.load(ckpt_path, map_location='cpu')
+
+    if isinstance(ckpt, dict) and 'pi_net' in ckpt:
+        _policy_net = PolicyNet(input_dim=STATE_DIM, n_actions=N_ABSTRACT_ACTIONS, hidden_dim=256)
+        _policy_net.load_state_dict(ckpt['pi_net'])
+        _net = None
+        print(f"Loaded NFSP pi-net from {ckpt_path} (ep {ckpt.get('episode', '?')})")
+    else:
+        _net = AdvantageNet(input_dim=STATE_DIM, n_actions=N_ABSTRACT_ACTIONS, hidden_dim=256)
+        _net.load_state_dict(ckpt)
+        print(f"Loaded CFR AdvantageNet from {ckpt_path}")
+
     print(f"\nOpen your browser at: http://localhost:{args.port}\n")
     app.run(host='0.0.0.0', port=args.port, debug=False)
 
