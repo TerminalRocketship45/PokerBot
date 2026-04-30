@@ -74,7 +74,10 @@ def play_interactive(checkpoint_path: str):
             state = env.new_game()
             while not state.is_terminal():
                 if state.is_chance_node():
-                    state.apply_action(state.chance_outcomes()[0][0])
+                    outcomes = state.chance_outcomes()
+                    actions, probs = zip(*outcomes)
+                    import numpy as _np
+                    state.apply_action(_np.random.choice(actions, p=probs))
                     continue
                 player = state.current_player()
                 if player == HUMAN:
