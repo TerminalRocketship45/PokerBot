@@ -169,6 +169,8 @@ def train_nfsp(
 
     agent      = NFSPAgent(q_net, pi_net, eta=config.eta, epsilon=config.epsilon_start)
     total_steps = 0
+    running_q_loss = running_pi_loss = 0.0
+    n_updates = 0
     t0 = time.time()
 
     for ep in range(config.n_episodes):
@@ -184,19 +186,23 @@ def train_nfsp(
                 total_steps += 1
                 if mode == 'br':
                     replay_buf.add(state_vec, action, G)
+                else:  # mode == 'avg': average-strategy transitions train pi-net
                     reservoir_buf.add(state_vec, np.array(action, dtype=np.float32), 1.0)
 
-        q_loss = pi_loss = 0.0
         if total_steps % config.update_every == 0:
             q_loss  = _update_q_net( q_net,  replay_buf,    opt_q,  config.batch_size)
             pi_loss = _update_pi_net(pi_net, reservoir_buf, opt_pi, config.batch_size)
+            if q_loss > 0 or pi_loss > 0:
+                n_updates += 1
+                running_q_loss  += (q_loss  - running_q_loss)  / n_updates
+                running_pi_loss += (pi_loss - running_pi_loss) / n_updates
 
         if (ep + 1) % 1000 == 0:
             elapsed = time.time() - t0
             print(f"Ep {ep+1:6d}/{config.n_episodes} | "
                   f"epsilon={agent.epsilon:.3f} | "
                   f"replay={len(replay_buf):,} reservoir={len(reservoir_buf):,} | "
-                  f"q_loss={q_loss:.4f} pi_loss={pi_loss:.4f} | "
+                  f"q_loss={running_q_loss:.4f} pi_loss={running_pi_loss:.4f} | "
                   f"{elapsed/60:.1f}min")
 
         if (ep + 1) % config.checkpoint_freq == 0:
