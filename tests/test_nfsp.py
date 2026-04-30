@@ -58,3 +58,30 @@ def test_replay_buffer_sample_raises_when_empty():
         assert False, "Should have raised"
     except ValueError:
         pass
+
+from src.nfsp.agent import NFSPAgent
+from src.models.advantage_net import AdvantageNet
+
+def test_nfsp_agent_act_returns_legal_action():
+    q_net = AdvantageNet(input_dim=60, n_actions=6, hidden_dim=64)
+    pi_net = PolicyNet(input_dim=60, n_actions=6, hidden_dim=64)
+    agent = NFSPAgent(q_net, pi_net, eta=0.5, epsilon=0.0)
+    state_vec = np.random.randn(60).astype(np.float32)
+    legal = [0, 1, 5]  # FOLD, CHECK_CALL, ALL_IN
+    for _ in range(20):
+        action, mode = agent.act(state_vec, legal)
+        assert action in legal, f"action {action} not in legal {legal}"
+        assert mode in ('br', 'avg')
+
+def test_nfsp_agent_epsilon_1_acts_randomly():
+    q_net = AdvantageNet(input_dim=60, n_actions=6, hidden_dim=64)
+    pi_net = PolicyNet(input_dim=60, n_actions=6, hidden_dim=64)
+    agent = NFSPAgent(q_net, pi_net, eta=1.0, epsilon=1.0)  # always br, always random
+    state_vec = np.zeros(60, dtype=np.float32)
+    legal = [1, 3]
+    seen = set()
+    for _ in range(100):
+        action, mode = agent.act(state_vec, legal)
+        seen.add(action)
+        assert mode == 'br'
+    assert seen == {1, 3}, "With epsilon=1.0, both actions must be seen"
