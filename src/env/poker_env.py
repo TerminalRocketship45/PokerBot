@@ -14,7 +14,9 @@ class PokerEnv:
             self.game = pyspiel.load_game("leduc_poker")
         self.use_hunl = use_hunl
 
-    def new_game(self):
+    def new_game(self, starting_stack: int = None):
+        if self.use_hunl:
+            return self.game.new_initial_state(starting_stack=starting_stack)
         return self.game.new_initial_state()
 
     def num_actions(self) -> int:

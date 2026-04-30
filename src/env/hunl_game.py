@@ -31,8 +31,13 @@ def _cstr(card: int) -> str:
 class HUNLGame:
     """Drop-in replacement for pyspiel game object (HUNL only)."""
 
-    def new_initial_state(self) -> HUNLState:
-        return HUNLState()
+    MIN_STACK = 100    # 5 BBs — extreme short stack (push/fold territory)
+    MAX_STACK = 1000   # 50 BBs — user-specified upper bound
+
+    def new_initial_state(self, starting_stack: int = None) -> HUNLState:
+        if starting_stack is None:
+            starting_stack = random.randint(self.MIN_STACK, self.MAX_STACK)
+        return HUNLState(starting_stack=starting_stack)
 
     def num_distinct_actions(self) -> int:
         return N_ABSTRACT_ACTIONS
@@ -51,18 +56,20 @@ class HUNLState:
       _stacks = remaining chips (already deducted for posted blinds)
     """
 
-    STARTING_STACK = 200
-    SB = 1
-    BB = 2
+    DEFAULT_STACK = 1000   # 50 big blinds at SB=10/BB=20 — standard short-to-mid stack play
+    SB = 10
+    BB = 20
 
-    def __init__(self):
+    def __init__(self, starting_stack: int = None):
+        ss = starting_stack if starting_stack is not None else self.DEFAULT_STACK
+        self._starting_stack: int = ss
         self._hole: List[List[int]] = [[], []]
         self._board: List[int] = []
 
         # Blinds deducted up front; bets track current-round commitments
         self._stacks: List[int] = [
-            self.STARTING_STACK - self.SB,
-            self.STARTING_STACK - self.BB,
+            ss - self.SB,
+            ss - self.BB,
         ]
         self._pot: int = 0
         self._bets: List[int] = [self.SB, self.BB]
@@ -128,13 +135,15 @@ class HUNLState:
     def returns(self) -> List[float]:
         if not self._terminal:
             return [0.0, 0.0]
+        ss = self._starting_stack
         return [
-            float(self._stacks[0] - self.STARTING_STACK),
-            float(self._stacks[1] - self.STARTING_STACK),
+            float(self._stacks[0] - ss) / ss,
+            float(self._stacks[1] - ss) / ss,
         ]
 
     def child(self, action: int) -> HUNLState:
         s = HUNLState.__new__(HUNLState)
+        s._starting_stack = self._starting_stack
         s._hole = [list(self._hole[0]), list(self._hole[1])]
         s._board = list(self._board)
         s._stacks = list(self._stacks)

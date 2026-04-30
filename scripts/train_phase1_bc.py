@@ -2,7 +2,10 @@
 Phase 1: Behavioral Cloning
 Usage: python scripts/train_phase1_bc.py
 """
-import os
+import os, sys
+sys.path.insert(0, r'C:\Users\rohan\AppData\Local\Temp\ospiel_manual_build2\python')
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.bc.train_bc import BCConfig, train_bc
 from src.bc.validate_bc import evaluate_bc_accuracy
 

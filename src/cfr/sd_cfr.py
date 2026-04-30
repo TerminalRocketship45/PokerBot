@@ -24,7 +24,6 @@ class SDCFRConfig:
     checkpoint_dir: str = "checkpoints"
     use_wandb: bool = False
     wandb_project: str = "hunl-deep-cfr"
-    starting_stack: float = 200.0
 
 
 def train_advantage_net_on_buffer(
@@ -95,7 +94,6 @@ def train_sd_cfr(
                 traverse(
                     state, player, net, buffer, reach_prob=1.0,
                     use_hunl=config.use_hunl,
-                    starting_stack=config.starting_stack,
                 )
 
         adv_loss = train_advantage_net_on_buffer(
@@ -113,5 +111,6 @@ def train_sd_cfr(
             path = f"{config.checkpoint_dir}/iter_{iteration+1:04d}.pt"
             torch.save(net.state_dict(), path)
             print(f"Saved checkpoint: {path}")
+
 
     return net

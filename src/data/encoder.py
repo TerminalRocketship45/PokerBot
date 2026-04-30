@@ -8,7 +8,7 @@ SUIT_MAP = {'c':0,'d':1,'h':2,'s':3}
 
 
 def encode_state(state, player: int, use_hunl: bool = False,
-                 starting_stack: float = 200.0) -> np.ndarray:
+                 starting_stack: float = None) -> np.ndarray:
     """
     Encode OpenSpiel state to float32[STATE_DIM=60].
     For Leduc (use_hunl=False): pads OpenSpiel's native info tensor to 60 floats.
@@ -16,6 +16,8 @@ def encode_state(state, player: int, use_hunl: bool = False,
     """
     if not use_hunl:
         return _encode_leduc(state, player)
+    if starting_stack is None:
+        starting_stack = float(getattr(state, '_starting_stack', 1000))
     return _encode_hunl(state, player, starting_stack)
 
 

@@ -16,6 +16,7 @@ from src.models.advantage_net import AdvantageNet
 from src.data.encoder import encode_state, STATE_DIM
 from src.cfr.regret_matching import regret_matching_plus
 from src.env.state_utils import ABSTRACT_ACTIONS, N_ABSTRACT_ACTIONS
+from src.env.hunl_game import FOLD as ACT_FOLD, CHECK_CALL as ACT_CALL, ALL_IN as ACT_ALLIN
 
 app = Flask(__name__)
 
@@ -28,8 +29,9 @@ _human_player = 1
 _hand_num = 0
 _scores = {0: 0, 1: 0}   # cumulative chip delta from starting stack
 _last_ai_action = ""
+_last_ai_action_detail = ""   # e.g. "ALL_IN (196 chips)"
+_last_ai_probs: list = []     # [{name, pct}] for current state
 _showdown = False
-_ai_hole: list = []       # revealed at showdown
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -51,9 +53,25 @@ def _deal_chance():
         _state.apply_action(np.random.choice(actions, p=probs))
 
 
+def _action_label(action_id: int, state, player: int) -> str:
+    """Human-readable label including chip amounts."""
+    if action_id == ACT_FOLD:
+        return '✗ Fold'
+    if action_id == ACT_CALL:
+        to_call = state._bets[1 - player] - state._bets[player]
+        return '✔ Check' if to_call == 0 else f'✔ Call {to_call}'
+    if action_id == ACT_ALLIN:
+        return f'⚡ All-In ({state._stacks[player]})'
+    # raises
+    pot = state._pot + state._bets[0] + state._bets[1]
+    labels = {2: f'↑ Raise ½ Pot (~{int(pot*0.5)})', 3: f'↑ Raise 1× Pot (~{pot})',
+              4: f'↑ Raise 2× Pot (~{int(pot*2)})'}
+    return labels.get(action_id, ABSTRACT_ACTIONS[action_id])
+
+
 def _ai_act():
-    """AI takes its turn (may be multiple turns if opponent checks, etc.)."""
-    global _state, _last_ai_action
+    """AI takes its turn."""
+    global _state, _last_ai_action, _last_ai_action_detail, _last_ai_probs
     if _state.is_terminal() or _state.is_chance_node():
         return
     if _state.current_player() != _ai_player:
@@ -69,10 +87,17 @@ def _ai_act():
     for a in valid:
         mask[a] = True
     probs = regret_matching_plus(adv, mask)
+
+    _last_ai_probs = [
+        {'name': ABSTRACT_ACTIONS[a], 'pct': round(float(probs[a]) * 100)}
+        for a in range(N_ABSTRACT_ACTIONS) if probs[a] > 0.005
+    ]
+
     action = torch.multinomial(probs, 1).item()
     if action not in legal:
         action = random.choice(valid)
     _last_ai_action = ABSTRACT_ACTIONS[action] if action < N_ABSTRACT_ACTIONS else str(action)
+    _last_ai_action_detail = _action_label(action, _state, _ai_player)
     _state.apply_action(action)
 
 
@@ -101,6 +126,11 @@ def _build_state_json(reveal_ai: bool = False) -> dict:
         delta = r[_human_player]
         result_msg = f"You {'WIN' if delta > 0 else 'LOSE'} {abs(delta):.0f} chips"
 
+    actions_with_labels = [
+        {'id': a, 'name': ABSTRACT_ACTIONS[a], 'label': _action_label(a, s, _human_player)}
+        for a in valid
+    ]
+
     return {
         'hand_num': _hand_num,
         'human_score': _scores[_human_player],
@@ -113,12 +143,15 @@ def _build_state_json(reveal_ai: bool = False) -> dict:
         'ai_stack': s._stacks[_ai_player],
         'human_bet': s._bets[_human_player],
         'ai_bet': s._bets[_ai_player],
+        'to_call': max(0, s._bets[_ai_player] - s._bets[_human_player]),
         'street': ['Preflop', 'Flop', 'Turn', 'River'][s._street],
-        'legal_actions': [{'id': a, 'name': ABSTRACT_ACTIONS[a]} for a in valid],
+        'legal_actions': actions_with_labels,
         'your_turn': not terminal and s.current_player() == _human_player,
         'terminal': terminal,
         'result_msg': result_msg,
         'last_ai_action': _last_ai_action,
+        'last_ai_action_detail': _last_ai_action_detail,
+        'ai_probs': _last_ai_probs,
     }
 
 
@@ -131,9 +164,11 @@ def index():
 
 @app.route('/api/new_game', methods=['POST'])
 def new_game():
-    global _state, _hand_num, _last_ai_action, _showdown
+    global _state, _hand_num, _last_ai_action, _last_ai_action_detail, _last_ai_probs, _showdown
     _hand_num += 1
     _last_ai_action = ""
+    _last_ai_action_detail = ""
+    _last_ai_probs = []
     _showdown = False
     _state = _env.new_game()
     _advance()
@@ -270,6 +305,33 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     border-radius: 20px;
   }
   #street-label { font-size: 0.8em; color: #9df; margin-top: 2px; }
+
+  /* AI thinking panel */
+  #ai-thinking {
+    background: rgba(0,0,0,0.45);
+    border: 1px solid rgba(255,215,0,0.3);
+    border-radius: 10px;
+    padding: 10px 18px;
+    width: 700px;
+    margin-top: 10px;
+    font-size: 0.82em;
+    color: #ddd;
+  }
+  #ai-thinking .title { color: #ffd700; font-weight: bold; margin-bottom: 6px; font-size: 0.9em; }
+  .prob-row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+  .prob-label { width: 120px; color: #aaa; }
+  .prob-bar-wrap { flex: 1; background: rgba(255,255,255,0.1); border-radius: 4px; height: 12px; }
+  .prob-bar { height: 12px; border-radius: 4px; background: #ffd700; }
+  .prob-pct { width: 36px; text-align: right; color: #fff; font-weight: bold; }
+
+  /* Situation hint */
+  #situation {
+    font-size: 0.82em;
+    color: #9df;
+    text-align: center;
+    margin-top: 4px;
+    min-height: 18px;
+  }
 
   /* Action log */
   #ai-action {
@@ -424,8 +486,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 </div>
 
 <div id="controls">
+  <div id="situation"></div>
   <div id="action-buttons"></div>
   <button id="new-hand-btn" onclick="newHand()">Deal New Hand ▶</button>
+</div>
+
+<div id="ai-thinking">
+  <div class="title">🤖 AI Last Decision</div>
+  <div id="ai-probs-content">— waiting for AI to act —</div>
 </div>
 
 <div id="result-banner"></div>
@@ -438,14 +506,6 @@ const ACTION_CLASSES = {
   'RAISE_ONE': 'raise',
   'RAISE_TWO': 'raise',
   'ALL_IN': 'allin',
-};
-const ACTION_LABELS = {
-  'FOLD': '✗ Fold',
-  'CHECK_CALL': '✔ Check / Call',
-  'RAISE_HALF': '↑ Raise ½ Pot',
-  'RAISE_ONE': '↑ Raise 1× Pot',
-  'RAISE_TWO': '↑ Raise 2× Pot',
-  'ALL_IN': '⚡ All-In',
 };
 
 function cardHTML(card) {
@@ -498,20 +558,46 @@ function renderState(data) {
 
   // AI last action
   const aiActionEl = document.getElementById('ai-action');
-  if (data.last_ai_action) {
-    aiActionEl.textContent = `AI: ${data.last_ai_action}`;
+  if (data.last_ai_action_detail) {
+    aiActionEl.textContent = `AI: ${data.last_ai_action_detail}`;
   } else {
     aiActionEl.textContent = '';
   }
 
-  // Action buttons
+  // AI probabilities panel
+  const probsEl = document.getElementById('ai-probs-content');
+  if (data.ai_probs && data.ai_probs.length > 0) {
+    probsEl.innerHTML = data.ai_probs.map(p =>
+      `<div class="prob-row">
+        <span class="prob-label">${p.name}</span>
+        <div class="prob-bar-wrap"><div class="prob-bar" style="width:${p.pct}%"></div></div>
+        <span class="prob-pct">${p.pct}%</span>
+      </div>`
+    ).join('');
+  } else if (data.last_ai_action) {
+    probsEl.textContent = '— no data —';
+  }
+
+  // Situation hint
+  const sitEl = document.getElementById('situation');
+  if (data.your_turn && data.to_call > 0) {
+    sitEl.textContent = `⚠ AI bet ${data.to_call} chips — your move`;
+  } else if (data.your_turn) {
+    sitEl.textContent = 'Your turn — no bet to call';
+  } else if (data.terminal) {
+    sitEl.textContent = '';
+  } else {
+    sitEl.textContent = 'AI is thinking...';
+  }
+
+  // Action buttons — use descriptive labels from server
   const btnsEl = document.getElementById('action-buttons');
   btnsEl.innerHTML = '';
   if (data.your_turn && data.legal_actions.length > 0) {
     data.legal_actions.forEach(a => {
       const btn = document.createElement('button');
       btn.className = 'action-btn ' + (ACTION_CLASSES[a.name] || 'raise');
-      btn.textContent = ACTION_LABELS[a.name] || a.name;
+      btn.textContent = a.label || a.name;
       btn.onclick = () => takeAction(a.id);
       btnsEl.appendChild(btn);
     });

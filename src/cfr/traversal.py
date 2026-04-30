@@ -13,7 +13,7 @@ def traverse(
     buffer: ReservoirBuffer,
     reach_prob: float,
     use_hunl: bool = False,
-    starting_stack: float = 200.0,
+    starting_stack: float = None,   # kept for call-site compat; auto-read from state
 ) -> float:
     """
     External sampling MCCFR traversal.
@@ -29,14 +29,14 @@ def traverse(
         chosen_action = np.random.choice(actions, p=probs)
         return traverse(
             state.child(chosen_action), traversing_player, adv_net,
-            buffer, reach_prob, use_hunl, starting_stack,
+            buffer, reach_prob, use_hunl,
         )
 
     current_player = state.current_player()
     legal_actions = state.legal_actions()
     n_actions = adv_net.net[-1].out_features
 
-    info_state = encode_state(state, current_player, use_hunl, starting_stack)
+    info_state = encode_state(state, current_player, use_hunl)  # reads stack from state
     state_tensor = torch.FloatTensor(info_state).unsqueeze(0)
 
     adv_net.eval()

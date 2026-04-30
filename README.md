@@ -1,129 +1,123 @@
 # HUNL Poker Agent
 
-A Heads-Up No-Limit Texas Hold'em poker AI built with **Behavioral Cloning → Single Deep CFR**.
+Heads-Up No-Limit Texas Hold'em AI trained via **Behavioral Cloning → Single Deep CFR**.
 
-## What is this?
+## How it works
 
-Texas Hold'em poker is an **imperfect-information game**: players can't see each other's cards. Unlike chess or Go (perfect information), optimal play requires a **mixed strategy** — sometimes bluffing, sometimes folding strong hands to avoid being exploitable.
+Texas Hold'em is an imperfect-information game — players can't see each other's cards. The goal is to reach **Nash equilibrium**: a strategy where neither player can gain by changing their play, regardless of what the opponent does.
 
-The goal is to approximate a **Nash equilibrium**: a strategy where neither player can improve their expected outcome by deviating. At Nash equilibrium, the agent is unexploitable by any opponent strategy.
+**Phase 1 — Behavioral Cloning:** Supervised learning on 1M+ real human hand histories. Trains the network to predict human actions. Gives the agent a warm start above random play.
 
-## Why this approach?
+**Phase 2 — Single Deep CFR:** The agent plays millions of hands against itself. At each decision point it computes *counterfactual regret* — how much better it would have done by taking a different action. Over time, regrets average to zero = Nash equilibrium. BC weights initialize this phase so fewer iterations are needed.
 
-Two techniques combined outperform either alone:
-
-1. **Behavioral Cloning (Phase 1):** Supervised learning on 21M real human NLHE hand histories. Trains the network to imitate strong human players. This gives the agent basic poker structure — don't fold aces preflop, don't call off your stack with 7-2 offsuit. Fast to train, but limited to human-level mistakes.
-
-2. **Single Deep CFR (Phase 2):** Counterfactual Regret Minimization self-play. The agent plays millions of hands against itself, accumulating regret for suboptimal decisions, and converges toward Nash equilibrium. BC weights initialize this phase, dramatically cutting the iterations needed.
-
-```mermaid
-flowchart LR
-    A[PHH Dataset\n21M NLHE hands] --> B[Behavioral Cloning\nCross-entropy loss]
-    B --> C[BC Checkpoint\nwarm-start weights]
-    C --> D[Single Deep CFR\nSelf-play MCCFR]
-    D --> E[Nash-approximate\nAgent]
-    E --> F[Terminal UI\nPlay against it]
-    E --> G[Exploitability\nEvaluation]
+```
+  IRC Dataset          Behavioral Cloning       SD-CFR Self-Play       Trained Agent
+  1M+ NLHE hands  -->  Cross-entropy loss   -->  Regret minimization -->  Nash-approx
+                        (imitates humans)         (beats humans)
 ```
 
-**Key novelty:** The BC warm-start is used to initialize the *advantage network* — the same network that estimates counterfactual regrets in CFR. This is not standard imitation learning; it's a curriculum that uses human data to bootstrap game-theoretic self-play.
+**Training pipeline:**
+
+```
+  [IRC hand histories]
+          |
+          v
+  [preprocess_irc.py]  -->  data/processed/irc_hunl.parquet  (state, action pairs)
+          |
+          v
+  [train_phase1_bc.py]  -->  checkpoints/bc_final.pt  (warm-start weights)
+          |
+          v
+  [run_training.py --config medium --bc_checkpoint bc_final.pt]
+          |
+          v
+  [checkpoints/hunl_final.pt]  -->  play via web UI or evaluate
+```
+
+**Action space (6 abstract actions):**
+
+```
+  0 FOLD         1 CHECK/CALL         2 RAISE 0.5x pot
+  3 RAISE 1x pot    4 RAISE 2x pot    5 ALL-IN
+```
+
+**Game rules:**
+- 2 players, SB = 10, BB = 20
+- Starting stacks: random 100–1000 chips per hand (teaches stack-depth awareness)
+- Returns normalized by starting stack so all games contribute equally to training
 
 ## Results
 
 | Agent | vs Random (bb/100) | Notes |
 |---|---|---|
 | Random baseline | 0 | uniform random actions |
-| SD-CFR quick (iter 10) | +397 ± 107 | aggressive early policy |
-| SD-CFR quick (iter 50) | +326 ± 92 | mid-training |
-| SD-CFR quick (iter 100) | **+269 ± 36** | converged, Nash-approximate |
+| SD-CFR quick (iter 10) | +397 ± 107 | early aggressive policy |
+| SD-CFR quick (iter 100) | +269 ± 36 | converged Nash-approximate |
 
-**Setup:** 2000 hands, duplicate matching (positions swapped), 95% CI shown.
-No BC warm-start (Pluribus dataset was 6-player; 2-player data unavailable).
+Win rate vs random *decreases* as training progresses — expected. Early iterations learn exploitative all-in policies. Later iterations balance their strategy to be unexploitable, which wins less against random but can't be beaten by a skilled player.
 
-**Note on learning curve:** Win rate vs random *decreases* as training progresses — expected behavior. Early iterations learn exploitative "always-raise" policies that crush random agents. Later iterations converge toward Nash equilibrium (balanced strategy) which is harder to exploit by a skilled opponent but wins less against random play by design.
-
-## Reproducing Results
-
-### 1. Setup
+## Setup
 
 ```bash
-git clone https://github.com/TerminalRocketship45/PokerBot
-cd PokerBot/RohanPoker
 conda env create -f environment.yml
-conda activate poker_agent
+conda activate rl_env
+pip install phevaluator
 ```
 
-### 2. Download datasets
-
-See `data/download_instructions.md`.
-
-### 3. Preprocess
+## Train
 
 ```bash
-python scripts/preprocess_phh.py
-python scripts/preprocess_irc.py  # optional, auto-skipped if <100K NLHE hands
-```
+# Preprocess IRC data
+python scripts/preprocess_irc.py
 
-### 4. Verify Phase 0 (core correctness gate)
-
-```bash
-pytest tests/test_core.py -v
-```
-
-All 6 checks must pass before training.
-
-### 5. Train Phase 1 (Behavioral Cloning)
-
-```bash
+# Phase 1: Behavioral Cloning (~15 min CPU)
 python scripts/train_phase1_bc.py
+
+# Phase 2: SD-CFR from BC weights (~hours, 500 iterations)
+python scripts/run_training.py --config medium --bc_checkpoint checkpoints/bc_final.pt
+
+# Or run both phases in sequence:
+python scripts/train_full_pipeline.py --config medium
 ```
 
-Target: >40% validation accuracy.
-
-### 6. Train Phase 2 (SD-CFR)
+## Play
 
 ```bash
-# Quick run (~100 min, CPU)
-python scripts/run_training.py --config quick
-
-# Or with a BC warm-start if you have one:
-python scripts/train_phase2_sdcfr.py --config quick --bc_checkpoint checkpoints/bc_final.pt
+# Start web UI at http://localhost:5000
+run_server.bat
 ```
 
-### 7. Evaluate
+Or run a narrated demo hand:
+```bash
+python scripts/demo_hand.py
+```
+
+## Evaluate
 
 ```bash
 python scripts/evaluate.py --checkpoint checkpoints/hunl_final.pt
 ```
 
-### 8. Play against the agent
-
-```bash
-python src/ui/play.py --checkpoint checkpoints/iter_0100.pt
-```
-
 ## Project Structure
 
 ```
-RohanPoker/
-├── src/
-│   ├── env/          # OpenSpiel wrapper, action abstraction
-│   ├── data/         # Encoder, parsers, BC dataset
-│   ├── models/       # AdvantageNet (shared for BC + CFR)
-│   ├── cfr/          # Regret matching+, reservoir buffer, MCCFR traversal, SD-CFR
-│   ├── bc/           # BC training + validation
-│   ├── eval/         # Exploitability, H2H, metrics
-│   └── ui/           # Terminal UI
-├── configs/          # quick.yaml, full.yaml training presets
-├── scripts/          # Preprocessing + training entry points
-├── tests/            # test_core.py (Phase 0 gate) + unit tests
-└── data/             # Raw + processed datasets (gitignored)
+src/
+  env/       HUNL game engine (OpenSpiel-compatible), action abstraction
+  data/      State encoder, IRC parser, BC dataset loader
+  models/    AdvantageNet (shared by BC and CFR phases)
+  cfr/       MCCFR traversal, reservoir buffer, SD-CFR training loop
+  bc/        Behavioral cloning trainer and validator
+  eval/      Exploitability, head-to-head, metrics
+  ui/        Flask web UI for playing against the agent
+configs/     quick.yaml, medium.yaml training presets
+scripts/     All entry points (preprocess, train, evaluate, demo)
+checkpoints/ Saved weights (gitignored)
+data/        Raw IRC data + processed parquet (gitignored)
 ```
 
 ## References
 
 1. [Deep CFR](https://arxiv.org/abs/1811.00164) — Brown et al. 2018
 2. [Single Deep CFR](https://arxiv.org/abs/1901.07621) — Steinberger 2019
-3. [Coherent Soft Imitation Learning](https://arxiv.org/abs/2305.16498) — BC→RL transition theory
-4. [OpenSpiel](https://github.com/google-deepmind/open_spiel) — game environment
-5. [PHH Dataset](https://zenodo.org/records/13997158) — 21M NLHE hand histories
+3. [OpenSpiel](https://github.com/google-deepmind/open_spiel) — game environment
+4. [IRC Poker Database](http://poker.cs.ualberta.ca/IRC/) — hand history dataset

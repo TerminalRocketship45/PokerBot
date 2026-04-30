@@ -29,8 +29,10 @@ def log(msg: str):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", choices=["quick", "full"], default="quick")
-    parser.add_argument("--bc_checkpoint", default=None)
+    parser.add_argument("--config", default="quick",
+                        help="Config name (quick/medium/full) or path to yaml")
+    parser.add_argument("--bc_checkpoint", default=None,
+                        help="Checkpoint to warm-start from (BC or prior SD-CFR run)")
     args = parser.parse_args()
 
     log(f"=== SD-CFR Training ({args.config}) ===")
@@ -44,7 +46,7 @@ def main():
     import torch
     import numpy as np
 
-    config_path = f"configs/{args.config}.yaml"
+    config_path = args.config if os.path.exists(args.config) else f"configs/{args.config}.yaml"
     with open(config_path) as f:
         cfg_dict = yaml.safe_load(f)
     cfg_dict["use_wandb"] = False  # ensure disabled
@@ -76,8 +78,7 @@ def main():
                 try:
                     state = env.new_game()
                     traverse(state, player, net, buffer,
-                             reach_prob=1.0, use_hunl=True,
-                             starting_stack=config.starting_stack)
+                             reach_prob=1.0, use_hunl=True)
                     traversal_count += 1
                 except Exception as e:
                     log(f"  ERROR in traversal: {e}")
@@ -98,9 +99,12 @@ def main():
             torch.save(net.state_dict(), path)
             log(f"Saved checkpoint: {path}")
 
-    final_path = f"{config.checkpoint_dir}/hunl_final.pt"
+    run_tag = os.path.splitext(os.path.basename(config_path))[0]
+    final_path = f"{config.checkpoint_dir}/hunl_{run_tag}_final.pt"
     torch.save(net.state_dict(), final_path)
-    log(f"Training complete. Final checkpoint: {final_path}")
+    # Also write as hunl_final.pt so other scripts always have a stable name
+    torch.save(net.state_dict(), f"{config.checkpoint_dir}/hunl_final.pt")
+    log(f"Training complete. Saved: {final_path} + hunl_final.pt")
 
 
 if __name__ == "__main__":
